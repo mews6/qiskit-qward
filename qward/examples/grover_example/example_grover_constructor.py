@@ -1,11 +1,13 @@
 """
 Example demonstrating Grover metrics via constructor.
 """
-
+from math import pi, sqrt
 from qward.examples.utils import get_display
 from qward import Scanner
 from qward.metrics import QiskitMetrics, ComplexityMetrics
-from qiskit import QuantumCircuit
+from qiskit.quantum_info import DensityMatrix as dm
+from qiskit import QuantumRegister as qr
+from qiskit import QuantumCircuit as qc
 
 display = get_display()
 
