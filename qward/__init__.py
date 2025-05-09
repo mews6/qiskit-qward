@@ -16,6 +16,8 @@ from qward.metrics import (
     SuccessRate,
 )
 
+from qward.visualization import success_over_time
+
 from qward.version import __version__
 
 __all__ = [

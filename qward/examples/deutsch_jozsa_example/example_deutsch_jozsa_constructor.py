@@ -194,7 +194,7 @@ def example_multiple_jobs_success_rate(circuit: QuantumCircuit, n: int):
         result = job.result()
         counts = result.get_counts()
         total_shots = sum(counts.values())
-        successful_shots = counts.get('0'*n, 0)
+        successful_shots = counts.get('1'*n, 0)
         success_rate = successful_shots / total_shots if total_shots > 0 else 0.0
 
         print(f"Job {i+1} success rate: {success_rate:.4f}")

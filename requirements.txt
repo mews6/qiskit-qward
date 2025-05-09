@@ -8,3 +8,6 @@
 
 # Documentation requirements
 -r requirements.docs.txt
+
+# Visualization requirements
+-r requirements.visualization.txt
