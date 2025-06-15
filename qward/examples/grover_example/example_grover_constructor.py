@@ -2,146 +2,293 @@
 Example demonstrating Grover metrics via constructor.
 """
 from math import pi, sqrt
+import math
 from qward.examples.utils import get_display
 from qward import Scanner
-from qward.metrics import QiskitMetrics, ComplexityMetrics
+from qward.metrics import QiskitMetrics, ComplexityMetrics, SuccessRate
 from qiskit.quantum_info import DensityMatrix as dm
 from qiskit import QuantumRegister as qr
 from qiskit import QuantumCircuit as qc
+from qiskit.circuit.library import GroverOperator, MCMT, ZGate
+from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
+from qiskit_aer import AerSimulator, AerJob
+from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+from qiskit.compiler import transpile
 
 display = get_display()
 
-"""Number of qubits."""
-N: int = 4
-
-"""How much optimization to perform on the circuits.
-   Higher levels are more optimized, but take longer to transpile.
-
-   * 0 = No optimization
-   * 1 = Light optimization
-   * 2 = Heavy optimization
-   * 3 = Heavier optimization
-"""
-OPTIMIZATION_LEVEL: int = 2
-
-"""Set of m nonnegative integers to search for using Grover's algorithm (i.e. TARGETS in base 10)."""
-SEARCH_VALUES: set[int] = { 9, 0, 3 }
-
-"""Amount of times to simulate the algorithm."""
-SHOTS: int = 10000
-
-"""Set of m N-qubit binary strings representing target state(s) (i.e. SEARCH_VALUES in base 2)."""
-TARGETS: set[str] = { f"{s:0{N}b}" for s in SEARCH_VALUES }
-
-"""N-qubit quantum register."""
-QUBITS: qr = qr(N, "qubit")
-
-def flip(target: str, qc: qc, qubit: str = "0") -> None:
-    """Flips qubit in target state.
-
-    Args:
-        target (str): Binary string representing target state.
-        qc (qc): Quantum circuit.
-        qubit (str, optional): Qubit to flip. Defaults to "0".
+def example_multiple_jobs_success_rate(circuit: QuantumCircuit, n: int):
     """
-    for i in range(len(target)):
-        if target[i] == qubit:
-            qc.x(i) # Pauli-X gate
-            
-def oracle(targets: set[str] = TARGETS, name: str = "Oracle") -> qc:
-    """Mark target state(s) with negative phase.
+    Example 7: Using SuccessRate with multiple Aer simulator jobs
+
+    This example demonstrates how to use SuccessRate with multiple Aer simulator jobs
+    to analyze the success rate across different runs.
 
     Args:
-        targets (set[str]): Binary string(s) representing target state(s). Defaults to TARGETS.
-        name (str, optional): Quantum circuit's name. Defaults to "Oracle".
+        circuit: The quantum circuit to analyze
+    """
+    print("\nExample 7: Using SuccessRate with multiple Aer simulator jobs")
+
+    # Import noise model components
+    from qiskit_aer.noise import (
+        NoiseModel,
+        QuantumError,
+        ReadoutError,
+        pauli_error,
+        depolarizing_error,
+    )
+
+    # Create an Aer simulator with default settings (no noise)
+    simulator = AerSimulator()
+
+    # Run the circuit multiple times with different noise models
+    jobs = []
+
+    # Run with default noise model (no noise)
+    job1 = simulator.run(circuit, shots=1024)
+    jobs.append(job1)
+
+    # Create a noise model with depolarizing errors
+    noise_model1 = NoiseModel()
+
+    # Add depolarizing error to all single qubit gates
+    depol_error = depolarizing_error(0.05, 1)  # 5% depolarizing error
+    noise_model1.add_all_qubit_quantum_error(depol_error, ["u1", "u2", "u3"])
+
+    # Add depolarizing error to all two qubit gates
+    depol_error_2q = depolarizing_error(0.1, 2)  # 10% depolarizing error
+    noise_model1.add_all_qubit_quantum_error(depol_error_2q, ["cx"])
+
+    # Add readout error
+    readout_error = ReadoutError([[0.9, 0.1], [0.1, 0.9]])  # 10% readout error
+    noise_model1.add_all_qubit_readout_error(readout_error)
+
+    # Create a simulator with the first noise model
+    noisy_simulator1 = AerSimulator(noise_model=noise_model1)
+    job2 = noisy_simulator1.run(circuit, shots=1024)
+    jobs.append(job2)
+
+    # Create a noise model with Pauli errors
+    noise_model2 = NoiseModel()
+
+    # Add Pauli error to all single qubit gates
+    pauli_error_1q = pauli_error([("X", 0.05), ("Y", 0.05), ("Z", 0.05), ("I", 0.85)])
+    noise_model2.add_all_qubit_quantum_error(pauli_error_1q, ["u1", "u2", "u3"])
+
+    # Add Pauli error to all two qubit gates
+    pauli_error_2q = pauli_error([("XX", 0.05), ("YY", 0.05), ("ZZ", 0.05), ("II", 0.85)])
+    noise_model2.add_all_qubit_quantum_error(pauli_error_2q, ["cx"])
+
+    # Add readout error
+    readout_error = ReadoutError([[0.95, 0.05], [0.05, 0.95]])  # 5% readout error
+    noise_model2.add_all_qubit_readout_error(readout_error)
+
+    # Create a simulator with the second noise model
+    noisy_simulator2 = AerSimulator(noise_model=noise_model2)
+    job3 = noisy_simulator2.run(circuit, shots=1024)
+    jobs.append(job3)
+
+    # Wait for all jobs to complete
+    for job in jobs:
+        job.result()
+
+    # Create a scanner with the circuit
+    scanner = Scanner(circuit=circuit)
+
+    # Add SuccessRate metric with multiple jobs
+    success_rate_metric = SuccessRate(circuit=circuit, success_criteria=lambda x: x == "11")
+
+    # Add jobs one by one to demonstrate the new functionality
+    success_rate_metric.add_job(jobs[0])  # Add first job
+    success_rate_metric.add_job(jobs[1:])  # Add remaining jobs as a list
+
+    scanner.add_metric(success_rate_metric)
+
+    # Calculate metrics
+    metrics_dict = scanner.calculate_metrics()
+
+    # Display the individual jobs metrics
+    print("\nSuccess rate individual jobs DataFrame:")
+    display(metrics_dict["SuccessRate.individual_jobs"])
+
+    # Display the aggregate metrics
+    print("\nSuccess rate aggregate metrics DataFrame:")
+    display(metrics_dict["SuccessRate.aggregate"])
+
+    # Compare individual job results
+    print("\nIndividual job results:")
+    for i, job in enumerate(jobs):
+        result = job.result()
+        counts = result.get_counts()
+        total_shots = sum(counts.values())
+        successful_shots = counts.get('1'*n, 0)
+        success_rate = successful_shots / total_shots if total_shots > 0 else 0.0
+
+        print(f"Job {i+1} success rate: {success_rate:.4f}")
+        print(f"Job {i+1} counts: {counts}")
+
+    return scanner, jobs
+
+def example_multiple_jobs_success_rate(circuit: QuantumCircuit):
+    """
+    Example 7: Using SuccessRate with multiple Aer simulator jobs
+
+    This example demonstrates how to use SuccessRate with multiple Aer simulator jobs
+    to analyze the success rate across different runs.
+
+    Args:
+        circuit: The quantum circuit to analyze
+    """
+    print("\nExample 7: Using SuccessRate with multiple Aer simulator jobs")
+
+    # Import noise model components
+    from qiskit_aer.noise import (
+        NoiseModel,
+        QuantumError,
+        ReadoutError,
+        pauli_error,
+        depolarizing_error,
+    )
+
+    # Create an Aer simulator with default settings (no noise)
+    simulator = AerSimulator()
+
+    # Run the circuit multiple times with different noise models
+    jobs = []
+
+    # Run with default noise model (no noise)
+    job1 = simulator.run(circuit, shots=1024)
+    jobs.append(job1)
+
+    # Create a noise model with depolarizing errors
+    noise_model1 = NoiseModel()
+
+    # Add depolarizing error to all single qubit gates
+    depol_error = depolarizing_error(0.05, 1)  # 5% depolarizing error
+    noise_model1.add_all_qubit_quantum_error(depol_error, ["u1", "u2", "u3"])
+
+    # Add depolarizing error to all two qubit gates
+    depol_error_2q = depolarizing_error(0.1, 2)  # 10% depolarizing error
+    noise_model1.add_all_qubit_quantum_error(depol_error_2q, ["cx"])
+
+    # Add readout error
+    readout_error = ReadoutError([[0.9, 0.1], [0.1, 0.9]])  # 10% readout error
+    noise_model1.add_all_qubit_readout_error(readout_error)
+
+    # Create a simulator with the first noise model
+    noisy_simulator1 = AerSimulator(noise_model=noise_model1)
+    job2 = noisy_simulator1.run(circuit, shots=1024)
+    jobs.append(job2)
+
+    # Create a noise model with Pauli errors
+    noise_model2 = NoiseModel()
+
+    # Add Pauli error to all single qubit gates
+    pauli_error_1q = pauli_error([("X", 0.05), ("Y", 0.05), ("Z", 0.05), ("I", 0.85)])
+    noise_model2.add_all_qubit_quantum_error(pauli_error_1q, ["u1", "u2", "u3"])
+
+    # Add Pauli error to all two qubit gates
+    pauli_error_2q = pauli_error([("XX", 0.05), ("YY", 0.05), ("ZZ", 0.05), ("II", 0.85)])
+    noise_model2.add_all_qubit_quantum_error(pauli_error_2q, ["cx"])
+
+    # Add readout error
+    readout_error = ReadoutError([[0.95, 0.05], [0.05, 0.95]])  # 5% readout error
+    noise_model2.add_all_qubit_readout_error(readout_error)
+
+    # Create a simulator with the second noise model
+    noisy_simulator2 = AerSimulator(noise_model=noise_model2)
+    job3 = noisy_simulator2.run(circuit, shots=1024)
+    jobs.append(job3)
+
+    # Wait for all jobs to complete
+    for job in jobs:
+        job.result()
+
+    # Create a scanner with the circuit
+    scanner = Scanner(circuit=circuit)
+
+    # Add SuccessRate metric with multiple jobs
+    success_rate_metric = SuccessRate(circuit=circuit, success_criteria=lambda x: x == "11")
+
+    # Add jobs one by one to demonstrate the new functionality
+    success_rate_metric.add_job(jobs[0])  # Add first job
+    success_rate_metric.add_job(jobs[1:])  # Add remaining jobs as a list
+
+    scanner.add_metric(success_rate_metric)
+
+    # Calculate metrics
+    metrics_dict = scanner.calculate_metrics()
+
+    # Display the individual jobs metrics
+    print("\nSuccess rate individual jobs DataFrame:")
+    display(metrics_dict["SuccessRate.individual_jobs"])
+
+    # Display the aggregate metrics
+    print("\nSuccess rate aggregate metrics DataFrame:")
+    display(metrics_dict["SuccessRate.aggregate"])
+
+    # Compare individual job results
+    print("\nIndividual job results:")
+    for i, job in enumerate(jobs):
+        result = job.result()
+        counts = result.get_counts()
+        total_shots = sum(counts.values())
+        successful_shots = counts.get('1111', 0)
+        success_rate = successful_shots / total_shots if total_shots > 0 else 0.0
+
+        print(f"Job {i+1} success rate: {success_rate:.4f}")
+        print(f"Job {i+1} counts: {counts}")
+
+    return scanner, jobs
+
+def create_oracle(marked_states):
+    """Build a Grover oracle for multiple marked states
+
+    Here we assume all input marked states have the same number of bits
+
+    Parameters:
+        marked_states (str or list): Marked states of oracle
 
     Returns:
-        qc: Quantum circuit representation of oracle.
+        QuantumCircuit: Quantum circuit representing Grover oracle
     """
-    # Create N-qubit quantum circuit for oracle
-    oracle = qc(QUBITS, name = name)
+    if not isinstance(marked_states, list):
+        marked_states = [marked_states]
+    # Compute the number of qubits in circuit
+    num_qubits = len(marked_states[0])
 
-    for target in targets:
-        # Reverse target state since Qiskit uses little-endian for qubit ordering
-        target = target[::-1]
-        
-        # Flip zero qubits in target
-        flip(target, oracle, "0")
-
-        # Simulate (N - 1)-control Z gate
-        oracle.h(N - 1)                       # Hadamard gate
-        oracle.mcx(list(range(N - 1)), N - 1) # (N - 1)-control Toffoli gate
-        oracle.h(N - 1)                       # Hadamard gate
-
-        # Flip back to original state
-        flip(target, oracle, "0")
-
-    return oracle
-
-def diffuser(name: str = "Diffuser") -> qc:
-    """Amplify target state(s) amplitude, which decreases the amplitudes of other states
-    and increases the probability of getting the correct solution (i.e. target state(s)).
-
-    Args:
-        name (str, optional): Quantum circuit's name. Defaults to "Diffuser".
-
-    Returns:
-        qc: Quantum circuit representation of diffuser (i.e. Grover's diffusion operator).
-    """
-    # Create N-qubit quantum circuit for diffuser
-    diffuser = qc(QUBITS, name = name)
-    
-    diffuser.h(QUBITS)                                    # Hadamard gate
-    diffuser.append(oracle({ "0" * N }), list(range(N)))  # Oracle with all zero target state
-    diffuser.h(QUBITS)                                    # Hadamard gate
-    
-    return diffuser
-
-def grover(oracle: qc = oracle(), diffuser: qc = diffuser(), name: str = "Grover Circuit") -> tuple[qc, dm]:
-    """Create quantum circuit representation of Grover's algorithm,
-    which consists of 4 parts: (1) state preparation/initialization,
-    (2) oracle, (3) diffuser, and (4) measurement of resulting state.
-    
-    Steps 2-3 are repeated an optimal number of times (i.e. Grover's
-    iterate) in order to maximize probability of success of Grover's algorithm.
-
-    Args:
-        oracle (qc, optional): Quantum circuit representation of oracle. Defaults to oracle().
-        diffuser (qc, optional): Quantum circuit representation of diffuser. Defaults to diffuser().
-        name (str, optional): Quantum circuit's name. Defaults to "Grover Circuit".
-
-    Returns:
-        tuple[qc, dm]: Quantum circuit representation of Grover's algorithm and its density matrix.
-    """
-    # Create N-qubit quantum circuit for Grover's algorithm
-    grover = qc(QUBITS, name = name)
-
-    # Intialize qubits with Hadamard gate (i.e. uniform superposition)
-    grover.h(QUBITS)
-    
-    # Apply barrier to separate steps
-    grover.barrier()
-    
-    # Apply oracle and diffuser (i.e. Grover operator) optimal number of times
-    for _ in range(int((pi / 4) * sqrt((2 ** N) / len(TARGETS)))):
-        grover.append(oracle, list(range(N)))
-        grover.append(diffuser, list(range(N)))
-
-    # Generate density matrix representation of Grover's algorithm
-    density_matrix = dm(grover)
-
-    # Measure all qubits once finished
-    grover.measure_all()
-    
-    return grover, density_matrix
+    qc = QuantumCircuit(num_qubits)
+    # Mark each target state in the input list
+    for target in marked_states:
+        # Flip target bit-string to match Qiskit bit-ordering
+        rev_target = target[::-1]
+        # Find the indices of all the '0' elements in bit-string
+        zero_inds = [ind for ind in range(num_qubits) if rev_target.startswith("1", ind)]
+        # Add a multi-controlled Z-gate with pre- and post-applied X-gates (open-controls)
+        # where the target bit-string has a '0' entry
+        qc.x(zero_inds)
+        qc.compose(MCMT(ZGate(), num_qubits - 1, 1).decompose(), inplace=True)
+        qc.x(zero_inds)
+    return qc
 
 def create_example_grover():
-    grover_oracle = oracle()
-    grover_diffuser = diffuser()
 
-    grover_circuit, density_matrix = grover(grover_oracle, grover_diffuser)
-    return grover_circuit
-
+    optimal_num_iterations = math.floor(
+        math.pi / (4 * math.asin(math.sqrt(1 / 2**4)))
+    )
+    
+    oracle = create_oracle(["1111"])
+    grover_op = GroverOperator(oracle)
+    qc = QuantumCircuit(grover_op.num_qubits)
+    # Create even superposition of all basis states
+    qc.h(range(grover_op.num_qubits))
+    # Apply Grover operator the optimal number of times
+    qc.compose(grover_op.power(optimal_num_iterations).decompose(), inplace=True)
+    # Measure all qubits
+    qc.measure_all()
+    
+    return qc.decompose()
+ 
 def example_metrics_with_classes():
     circuit = create_example_grover()
     print("\nExample: Metrics via Scanner constructor (metric classes)")
@@ -166,6 +313,8 @@ def example_metrics_with_instances():
 def main():
     example_metrics_with_classes()
     example_metrics_with_instances()
+    create_example_grover()
+    example_multiple_jobs_success_rate(create_example_grover())
 
 if __name__ == "__main__":
     main()
